@@ -22,6 +22,7 @@ vehicle_ownership_model: atlas           ##
 docker_images:
   urbansim: mxndrwgrdnr/block_model_v2_pb
   atlas: ghcr.io/lbnl-science-it/atlas:integration
+  # atlas: ghcr.io/lbnl-science-it/atlas:integration:18d2652
   beam: dimaopen/beam:0.8.6.3
   activitysim: mxndrwgrdnr/activitysim:latest
   polaris:
@@ -66,9 +67,7 @@ atlas_outyear: 2017      ## maybe can use  start_year ??
 atlas_freq:    1         ## travel_model_freq ??
 atlas_sample_size: 0     # zero means no sampling, whole pop.
 atlas_num_processes: 94  # can't you just detect num of cpu?
-vsim_formattable_command: "--freq {0} --outyear {1} --basedir {2} --codedir {3}" 
-## command line options to main.R may need to be updated to handle additional params:
-## --size {4} --proc {5} 
+vsim_formattable_command: "--freq {0} --outyear {1} --npe {2} --nsample {3} --basedir {4} --codedir {5}"
 
 
 # BEAM 

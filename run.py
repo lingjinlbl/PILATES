@@ -184,11 +184,11 @@ def get_vsim_docker_vols(settings):
     return vsim_docker_vols
 
 ## For Atlas container command, vsim for vehicle simulation
-def get_vsim_cmd(settings, freq, output_year):
+def get_vsim_cmd(settings, freq, output_year, npe, nsample):
     basedir = settings.get('basedir','/')
     codedir = settings.get('codedir','/')
     formattable_vsim_cmd = settings['vsim_formattable_command']
-    vsim_cmd = formattable_vsim_cmd.format(freq, forecast_year, basedir, codedir)
+    vsim_cmd = formattable_vsim_cmd.format(freq, forecast_year, npe, nsample, basedir, codedir)
     return vsim_cmd
 
 
@@ -304,7 +304,7 @@ def forecast_land_use(settings, year, forecast_year, client):
 ## Atlas - Ling/Tin/Yuhan
 ## vsim  = vehicle simulation  (asim was used by activitysim)
 ## (notes in gmail 2021.1122, search for 3bd22b3 )
-def run_atlas(settings, freq, output_year, client):
+def run_atlas(settings, freq, output_year, npe, nsample, client ):
 
     ## it was suggested to run in a loop, line 536 of example_run.py
     ## but is it really needed to loop here?  
@@ -318,7 +318,7 @@ def run_atlas(settings, freq, output_year, client):
     vehicle_ownership_model = settings.get('vehicle_ownership_model',False)
     atlas_image = image_names[vehicle_ownership_model]  ## ie atlas
     vsim_docker_vols = get_vsim_docker_vols(settings)
-    vsim_cmd = get_vsim_cmd(settings, freq, output_year)
+    vsim_cmd = get_vsim_cmd(settings, freq, output_year, npe, nsample)
     docker_stdout = settings.get('docker_stdout', False)
 
 
@@ -332,8 +332,8 @@ def run_atlas(settings, freq, output_year, client):
     # 3. RUN ATLAS via docker container client
     print_str = (
         "Simulating vehicle ownership for {0} "
-        "with frequency {1}.".format(
-            year, freq ))
+        "with frequency {1}, npe {2} nsample {3}.".format(
+            year, freq, npe, nsample ))
     formatted_print(print_str)
     vsim = client.containers.run(
         atlas_image,
@@ -671,8 +671,8 @@ if __name__ == '__main__':
 
         # 1.5 :) RUN ATLAS   ## Ling/Tin/Yuhan
         ##++?? if  vehicle_ownership_model_enabled:
-            #run_atlas( settings, freq, output_year, client)
-            run_atlas( settings, 1, 2017, client)
+            #run_atlas( settings, freq, output_year, npe, nsample, client)
+            run_atlas( settings, 1, 2017, 94, 0, client)
 
 
         # 2. GENERATE ACTIVITIES
