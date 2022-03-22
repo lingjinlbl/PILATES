@@ -1,3 +1,5 @@
+from re import L
+import shutil
 import yaml
 import docker
 import os
@@ -36,6 +38,21 @@ def find_latest_beam_iteration(beam_output_dir):
             if dir == "ITER":
                 iter_dirs += os.path.join(root, dir)
     print(iter_dirs)
+
+def setup_beam_skims(settings):
+    region = settings['region']
+    beam_input_dir = settings['beam_local_input_folder']
+    beam_output_dir = settings['beam_local_output_folder']
+    skims_fname = settings['skims_fname']
+    input_skims_location = os.path.join(beam_input_dir, region, skims_fname)
+    mutable_skims_location = os.path.join(beam_output_dir, skims_fname)
+
+    logger.info("Copying input skims from {0} to {1}".format(
+        input_skims_location,
+        mutable_skims_location))
+
+    shutil.copyfile(input_skims_location, mutable_skims_location)
+
 
 def parse_args_and_settings(settings_file='settings.yaml'):
 
@@ -186,7 +203,7 @@ def get_atlas_cmd(settings, freq, output_year, npe, nsample):
     basedir = settings.get('basedir','/')
     codedir = settings.get('codedir','/')
     formattable_atlas_cmd = settings['atlas_formattable_command']
-    atlas_cmd = formattable_atlas_cmd.format(freq, forecast_year, npe, nsample, basedir, codedir)
+    atlas_cmd = formattable_atlas_cmd.format(freq, output_year, npe, nsample, basedir, codedir)
     return atlas_cmd
 
 
@@ -298,20 +315,12 @@ def forecast_land_use(settings, year, forecast_year, client):
 
     return
 
-## Atlas - Ling/Tin/Yuhan
-## (notes in gmail 2021.1122, search for 3bd22b3 )
+## Atlas: evolve household vehicle ownership
 def run_atlas(settings, output_year, client, warm_start_atlas):
 
     # warm_start: warm_start_atlas = True, output_year = year = start_year
     # asim_no_usim: warm_start_atlas = True, output_year = year (should  = start_year)
     # normal: warm_start_atlas = False, output_year = forecast_year
-
-    ## it was suggested to run in a loop, line 536 of example_run.py
-    ## but is it really needed to loop here?  
-    ## or the code in main.R in the atlas container will deal with those details?
-    ##
-    ##for i in range(input_year, output_year): 
-    ##	run_atlas_1_yr()
 
     # 1. PARSE SETTINGS
     image_names = settings['docker_images']
@@ -333,7 +342,8 @@ def run_atlas(settings, output_year, client, warm_start_atlas):
         print_str = (
             "Preparing input data for vehicle ownership simulation for {0}.".format(output_year) )
     formatted_print(print_str)
-    # prepare atlas csv inputs from urbansim h5 output
+
+    # prepare atlas inputs from urbansim h5 output
     # preprocessed csv input files saved in "atlas/atlas_inputs/year{}/"
     atlas_pre.prepare_atlas_inputs(settings, output_year, warm_start = warm_start_atlas)
 
@@ -367,7 +377,32 @@ def run_atlas(settings, output_year, client, warm_start_atlas):
 
     return
 
-
+## Atlas: evolve household vehicle ownership
+# run_atlas_auto is a run_atlas upgraded version, which will run_atlas again if
+# outputs are not generated. This is mainly for preventing crash due to parellel  
+# computiing errors that can be resolved by a simple resubmission
+def run_atlas_auto(settings, output_year, client, warm_start_atlas):
+    
+    # run atlas
+    atlas_run_count = 1
+    try:
+        run_atlas(settings, output_year, client, warm_start_atlas)
+    except:
+        logger.error('ATLAS RUN #{} FAILED'.format(atlas_run_count))
+    
+    # rerun atlas if outputs not found and run count <= 3
+    atlas_output_path = settings['atlas_host_output_folder']
+    fname = 'vehicles_{}.csv'.format(output_year)
+    while atlas_run_count < 3:
+        atlas_run_count = atlas_run_count + 1
+        if not os.path.exists(os.path.join(atlas_output_path, fname)):
+            logger.error('LAST ATLAS RUN FAILED -> RE-LAUNCHING ATLAS RUN #{} BELOW'.format(atlas_run_count))
+            try:
+                run_atlas(settings, output_year, client, warm_start_atlas)
+            except:
+                logger.error('ATLAS RUN #{} FAILED'.format(atlas_run_count))
+    
+    return
 
 
 def generate_activity_plans(
@@ -410,7 +445,8 @@ def generate_activity_plans(
         activity_demand_model,
         land_use_model)
     formatted_print(print_str)
-    asim_pre.create_skims_from_beam(settings, year, overwrite=overwrite_skims)
+    asim_pre.create_skims_from_beam(
+        settings, year=forecast_year, overwrite=overwrite_skims)
     asim_pre.create_asim_data_from_h5(
         settings, year=forecast_year, warm_start=warm_start)
 
@@ -602,7 +638,7 @@ def run_replanning_loop(settings, forecast_year):
         formatted_print(print_str)
 
         # a) format new skims for asim
-        asim_pre.create_skims_from_beam(settings, year, overwrite=True)
+        asim_pre.create_skims_from_beam(settings, forecast_year, overwrite=True)
 
         # b) replan with asim
         print_str = (
@@ -661,6 +697,9 @@ if __name__ == '__main__':
         formatted_print('"STATIC SKIMS" MODE ENABLED')
         logger.info('Using the same set of skims for every iteration.')
 
+    if settings.get('travel_model') == 'beam':
+        setup_beam_skims(settings)
+
     # start docker client
     client = initialize_docker_client(settings)
 
@@ -678,7 +717,7 @@ if __name__ == '__main__':
 
                 # IF ATLAS ENABLED, UPDATE USIM INPUT H5
                 if vehicle_ownership_model_enabled: 
-                    run_atlas(settings, year, client, warm_start_atlas = True)
+                    run_atlas_auto(settings, year, client, warm_start_atlas = True)
 
                 warm_start_activities(settings, year, client)
                 mandatory_activities_generated_this_year = True
@@ -690,7 +729,7 @@ if __name__ == '__main__':
             forecast_year = year
 
 
-        # 1.5 :) RUN ATLAS   ## Ling/Tin/Yuhan
+        # 2. RUN ATLAS (HOUSEHOLD VEHICLE OWNERSHIP)
         if vehicle_ownership_model_enabled:
 
             # If the forecast year is the same as the base year of this
@@ -698,15 +737,15 @@ if __name__ == '__main__':
             # case, atlas need to update urbansim *inputs* before activitysim 
             # reads it in the next step. 
             if forecast_year == year:
-                run_atlas(settings, year, client, warm_start_atlas = True)
+                run_atlas_auto(settings, year, client, warm_start_atlas = True)
 
             # If urbansim has been called, ATLAS will read, run, and update
             # vehicle ownership info in urbansim *outputs* h5 datastore.
             else:
-                run_atlas(settings, forecast_year, client, warm_start_atlas= False)
+                run_atlas_auto(settings, forecast_year, client, warm_start_atlas = False)
 
 
-        # 2. GENERATE ACTIVITIES
+        # 3. GENERATE ACTIVITIES
         if activity_demand_enabled:
 
             # If the forecast year is the same as the base year of this
@@ -721,6 +760,15 @@ if __name__ == '__main__':
             generate_activity_plans(
                 settings, year, forecast_year, client,
                 warm_start=warm_start_skims)
+
+            if settings['traffic_assignment_enabled']:
+                print_str = (
+                    "Copying full {0} BEAM input data from "
+                    "Activitysim outputs before replanning loop".format(
+                        year))
+                formatted_print(print_str)
+                beam_pre.copy_plans_from_asim(
+                    settings, year, -1)
 
             # 5. INITIALIZE ASIM LITE IF BEAM REPLANNING ENABLED
             # have to re-run asim all the way through on sample to shrink the
@@ -737,10 +785,10 @@ if __name__ == '__main__':
 
         if traffic_assignment_enabled:
 
-            # 3. RUN BEAM
+            # 4. RUN BEAM
             run_traffic_assignment(settings, year, client)
 
-            # 4. REPLAN
+            # 5. REPLAN
             if replanning_enabled > 0:
                 run_replanning_loop(settings, forecast_year)
 
